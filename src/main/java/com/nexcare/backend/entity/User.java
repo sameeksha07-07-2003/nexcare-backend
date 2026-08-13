@@ -1,13 +1,14 @@
 package com.nexcare.backend.entity;
 
 import jakarta.persistence.*;
+import org.hibernate.annotations.CreationTimestamp;
 
 
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name="users")
-public class User {
+public class User{
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -20,20 +21,21 @@ public class User {
     @Column(nullable = false,unique = true)
     private String email;
 
-    @Column(nullable = false,name="password_hash")
+    @Column(name="password_hash")
     private String passwordHash;
 
     @Column(name="phone_number")
     private String phoneNumber;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, name= "role")
     private Role role;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, name = "status")
     private UserStatus status;
 
+    @CreationTimestamp
     @Column(name="created_at")
     private LocalDateTime createdAt;
 
@@ -94,7 +96,12 @@ public class User {
     public String getEmail(){
         return email;
     }
-
+    public Role getRole(){
+        return role;
+    }
+    public UserStatus getStatus(){
+        return status;
+    }
     public String getPhoneNumber(){
         return phoneNumber;
     }
