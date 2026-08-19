@@ -4,6 +4,7 @@ import com.nexcare.backend.security.JwtAuthenticationFilter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -62,6 +63,9 @@ public class SecurityConfig {
 
                         // Public APIs
                         .requestMatchers("/auth/signup", "/auth/login")
+                        .permitAll()
+
+                        .requestMatchers(HttpMethod.GET, "/api/v1/doctors")
                         .permitAll()
 
                         // Everything else requires authentication

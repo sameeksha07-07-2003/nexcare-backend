@@ -80,6 +80,14 @@ public class Doctor {
     private String placeOfWork;
 
     @Setter
+    @Column(name = "city")
+    private String city;
+
+    @Setter
+    @Column(name = "years_of_experience")
+    private Integer yearsOfExperience;
+
+    @Setter
     @Enumerated(EnumType.STRING)
     @Column(
             name = "verification_status",

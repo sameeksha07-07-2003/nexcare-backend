@@ -36,6 +36,10 @@ public class Patient {
     private String address;
 
     @Setter
+    @Column(name = "city")
+    private String city;
+
+    @Setter
     private String emergencyContact;
 
     @Setter
@@ -43,5 +47,6 @@ public class Patient {
 
     @Setter
     private Double weight;
+
 
 }
