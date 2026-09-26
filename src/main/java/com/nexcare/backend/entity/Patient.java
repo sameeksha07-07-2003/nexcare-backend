@@ -48,5 +48,8 @@ public class Patient {
     @Setter
     private Double weight;
 
+    @Setter
+    @Column(name = "photo_url")
+    private String photoUrl;
 
 }

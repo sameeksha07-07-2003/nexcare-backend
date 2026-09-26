@@ -51,7 +51,7 @@ public class SecurityConfig {
 
         http
 
-                // Disable CSRF because we are using JWT (Stateless Authentication)
+                // Disable CSRF because we are using JWT
                 .csrf(csrf -> csrf.disable())
 
                 // No HTTP Session should be created
@@ -68,9 +68,23 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/v1/doctors")
                         .permitAll()
 
+                        // Only doctors can create availability
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/v1/doctors/me/availability"
+                        )
+                        .hasRole("DOCTOR")
+
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/appointments/book"
+                        )
+                        .hasRole("PATIENT")
+
                         // Everything else requires authentication
                         .anyRequest()
-                        .authenticated())
+                        .authenticated()
+                )
 
                 // Authentication Provider
                 .authenticationProvider(authenticationProvider())

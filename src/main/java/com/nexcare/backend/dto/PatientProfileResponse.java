@@ -24,6 +24,8 @@ public class PatientProfileResponse {
     private final Double height;
     private final Double weight;
 
+    private final String photoUrl;
+
     public PatientProfileResponse(
             String email,
             String firstName,
@@ -35,7 +37,8 @@ public class PatientProfileResponse {
             String address,
             String emergencyContact,
             Double height,
-            Double weight) {
+            Double weight,
+            String photoUrl) {
 
         this.email = email;
         this.firstName = firstName;
@@ -51,5 +54,7 @@ public class PatientProfileResponse {
 
         this.height = height;
         this.weight = weight;
+
+        this.photoUrl = photoUrl;
     }
 }

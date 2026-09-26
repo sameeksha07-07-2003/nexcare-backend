@@ -7,6 +7,7 @@ import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/patient")
@@ -49,5 +50,18 @@ public class PatientProfileController {
         // Pass the authenticated user's email and the
         // update data to the service layer
         return patientProfileService.updateProfile(email, request);
+    }
+
+    // POST /patient/profile/photo
+    // Uploads a new profile photo (multipart/form-data, field name "file"),
+    // stores it on Cloudinary, and returns the updated profile (including
+    // the new photoUrl) so the frontend can sync it everywhere.
+    @PostMapping(value = "/profile/photo", consumes = "multipart/form-data")
+    public PatientProfileResponse updateProfilePhoto(
+            @AuthenticationPrincipal UserDetails userDetails,
+            @RequestParam("file") MultipartFile file) {
+
+        String email = userDetails.getUsername();
+        return patientProfileService.updateProfilePhoto(email, file);
     }
 }

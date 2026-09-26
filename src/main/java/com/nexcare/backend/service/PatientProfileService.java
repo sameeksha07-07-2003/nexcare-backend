@@ -8,19 +8,23 @@ import com.nexcare.backend.repository.PatientRepository;
 import com.nexcare.backend.repository.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class PatientProfileService {
 
     private final UserRepository userRepository;
     private final PatientRepository patientRepository;
+    private final CloudinaryService cloudinaryService;
 
     public PatientProfileService(
             UserRepository userRepository,
-            PatientRepository patientRepository) {
+            PatientRepository patientRepository,
+            CloudinaryService cloudinaryService) {
 
         this.userRepository = userRepository;
         this.patientRepository = patientRepository;
+        this.cloudinaryService = cloudinaryService;
     }
 
     /*
@@ -84,6 +88,30 @@ public class PatientProfileService {
     }
 
     /*
+     * Uploads a new profile photo to Cloudinary and saves the resulting
+     * URL on the Patient. Kept separate from updateProfile() since it's a
+     * multipart request, not a JSON body.
+     */
+    @Transactional
+    public PatientProfileResponse updateProfilePhoto(String email, MultipartFile file) {
+
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() ->
+                        new RuntimeException("User not found"));
+
+        Patient patient = patientRepository.findByUser(user)
+                .orElseThrow(() ->
+                        new RuntimeException("Patient profile not found"));
+
+        String photoUrl = cloudinaryService.uploadPatientPhoto(file);
+        patient.setPhotoUrl(photoUrl);
+
+        Patient savedPatient = patientRepository.save(patient);
+
+        return toProfileResponse(user, savedPatient);
+    }
+
+    /*
      * Converts User + Patient entities into the response DTO.
      *
      * Keeping this mapping in one place avoids duplicating
@@ -104,7 +132,8 @@ public class PatientProfileService {
                 patient.getAddress(),
                 patient.getEmergencyContact(),
                 patient.getHeight(),
-                patient.getWeight()
+                patient.getWeight(),
+                patient.getPhotoUrl()
         );
     }
 }
