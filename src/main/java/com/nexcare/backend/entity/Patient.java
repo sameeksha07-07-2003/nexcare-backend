@@ -49,7 +49,21 @@ public class Patient {
     private Double weight;
 
     @Setter
-    @Column(name = "photo_url")
+    @Column(
+            name = "photo_url",
+            length = 1000
+    )
     private String photoUrl;
+
+    @Setter
+    @Column(
+            name = "photo_public_id",
+            length = 255
+    )
+    private String photoPublicId;
+
+    @Setter
+    @Column(name = "photo_version")
+    private Long photoVersion;
 
 }

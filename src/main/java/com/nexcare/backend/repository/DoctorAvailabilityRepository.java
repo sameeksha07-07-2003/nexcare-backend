@@ -9,20 +9,61 @@ import org.springframework.data.repository.query.Param;
 import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 
-public interface DoctorAvailabilityRepository extends JpaRepository<DoctorAvailability, Long> {
-    List<DoctorAvailability> findByDoctor(Doctor doctor);
+public interface DoctorAvailabilityRepository
+        extends JpaRepository<DoctorAvailability, Long> {
+
+    List<DoctorAvailability>
+    findByDoctorOrderByDayOfWeekAscStartTimeAsc(
+            Doctor doctor
+    );
+
+    List<DoctorAvailability>
+    findByDoctorAndActiveTrueOrderByDayOfWeekAscStartTimeAsc(
+            Doctor doctor
+    );
+
+    List<DoctorAvailability>
+    findByDoctorDoctorIdAndActiveTrueOrderByDayOfWeekAscStartTimeAsc(
+            Long doctorId
+    );
+
+    Optional<DoctorAvailability> findByIdAndDoctor(
+            Long availabilityId,
+            Doctor doctor
+    );
 
     @Query("""
-            SELECT COUNT(a) > 0
-            FROM DoctorAvailability a
-            WHERE a.doctor = :doctor
-              AND a.dayOfWeek = :dayOfWeek
-              AND a.startTime < :endTime
-              AND a.endTime > :startTime
+            SELECT COUNT(availability) > 0
+            FROM DoctorAvailability availability
+            WHERE availability.doctor = :doctor
+              AND availability.active = true
+              AND availability.dayOfWeek = :dayOfWeek
+              AND availability.startTime < :endTime
+              AND availability.endTime > :startTime
             """)
     boolean existsOverlappingAvailability(
             @Param("doctor") Doctor doctor,
+            @Param("dayOfWeek") DayOfWeek dayOfWeek,
+            @Param("startTime") LocalTime startTime,
+            @Param("endTime") LocalTime endTime
+    );
+
+    @Query("""
+            SELECT COUNT(availability) > 0
+            FROM DoctorAvailability availability
+            WHERE availability.doctor = :doctor
+              AND availability.active = true
+              AND availability.id <> :excludedAvailabilityId
+              AND availability.dayOfWeek = :dayOfWeek
+              AND availability.startTime < :endTime
+              AND availability.endTime > :startTime
+            """)
+    boolean existsOverlappingAvailabilityExcludingId(
+            @Param("doctor") Doctor doctor,
+            @Param("excludedAvailabilityId")
+            Long excludedAvailabilityId,
             @Param("dayOfWeek") DayOfWeek dayOfWeek,
             @Param("startTime") LocalTime startTime,
             @Param("endTime") LocalTime endTime

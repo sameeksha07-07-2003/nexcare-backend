@@ -21,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
+import java.util.Locale;
 
 @Service
 public class UserService {
@@ -95,8 +96,12 @@ public class UserService {
         validateRoleAndProfile(request);
 
         // 2. Check whether email is already registered
-        if (userRepository.findByEmail(request.getEmail()).isPresent()) {
-            throw new EmailAlreadyExistsException(request.getEmail());
+        String normalizedEmail = request.getEmail()
+                .trim()
+                .toLowerCase(Locale.ROOT);
+
+        if (userRepository.findByEmail(normalizedEmail).isPresent()) {
+            throw new EmailAlreadyExistsException(normalizedEmail);
         }
 
         // 3. Create User entity
@@ -104,7 +109,7 @@ public class UserService {
 
         user.setFirstName(request.getFirstName());
         user.setLastName(request.getLastName());
-        user.setEmail(request.getEmail());
+        user.setEmail(normalizedEmail);
         user.setPhoneNumber(request.getPhoneNumber());
         user.setRole(request.getRole());
 
@@ -192,6 +197,17 @@ public class UserService {
         doctor.setPlaceOfWork(
                 profile.getPlaceOfWork()
         );
+        doctor.setCity(profile.getCity());
+
+        doctor.setYearsOfExperience(
+                profile.getYearsOfExperience()
+        );
+
+        doctor.setBio(profile.getBio());
+
+        doctor.setConsultationFee(
+                profile.getConsultationFee()
+        );
 
         // This is controlled by the backend.
         // Client cannot decide whether a doctor is verified.
@@ -207,7 +223,11 @@ public class UserService {
 
         // 1. Find user by email
         Optional<User> dbUser =
-                userRepository.findByEmail(request.getEmail());
+                userRepository.findByEmail(
+                        request.getEmail()
+                                .trim()
+                                .toLowerCase(Locale.ROOT)
+                );
 
         // 2. Reject if user does not exist
         if (dbUser.isEmpty()) {
@@ -216,6 +236,11 @@ public class UserService {
 
         // 3. Get existing user
         User existingUser = dbUser.get();
+
+        if (existingUser.getStatus() != UserStatus.ACTIVE
+                || existingUser.getDeletedAt() != null) {
+            throw new InvalidCredentialsException();
+        }
 
         // 4. Verify password
         if (passwordEncoder.matches(

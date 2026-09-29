@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 
 import javax.crypto.SecretKey;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Date;
 import java.util.function.Function;
 
@@ -23,11 +24,17 @@ public class JwtService {
     private long jwtExpiration;
 
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(secretKey.getBytes());
+        return Keys.hmacShaKeyFor(
+                secretKey.getBytes(StandardCharsets.UTF_8)
+        );
     }
     public boolean isTokenValid(String token, User user){
         final String  email = extractEmail(token);
-        return email.equals(user.getEmail()) && !isTokenExpired(token);
+        return email.equals(user.getEmail())
+                && user.getStatus()
+                    == com.nexcare.backend.entity.UserStatus.ACTIVE
+                && user.getDeletedAt() == null
+                && !isTokenExpired(token);
     }
     public String generateToken(User user){
         return Jwts.builder().subject(user.getEmail()).claim("role" , user.getRole().name())

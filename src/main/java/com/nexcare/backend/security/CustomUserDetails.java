@@ -1,6 +1,7 @@
 package com.nexcare.backend.security;
 
 import com.nexcare.backend.entity.User;
+import com.nexcare.backend.entity.UserStatus;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -35,5 +36,11 @@ public class CustomUserDetails implements UserDetails {
 
     public User getUser() {
         return user;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return user.getStatus() == UserStatus.ACTIVE
+                && user.getDeletedAt() == null;
     }
 }

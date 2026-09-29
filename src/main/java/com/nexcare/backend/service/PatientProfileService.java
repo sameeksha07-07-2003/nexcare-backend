@@ -1,5 +1,6 @@
 package com.nexcare.backend.service;
 
+import com.nexcare.backend.dto.CloudinaryUploadResultRequest;
 import com.nexcare.backend.dto.PatientProfileResponse;
 import com.nexcare.backend.dto.PatientProfileUpdateRequest;
 import com.nexcare.backend.entity.Patient;
@@ -8,7 +9,8 @@ import com.nexcare.backend.repository.PatientRepository;
 import com.nexcare.backend.repository.UserRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Map;
 
 @Service
 public class PatientProfileService {
@@ -20,107 +22,161 @@ public class PatientProfileService {
     public PatientProfileService(
             UserRepository userRepository,
             PatientRepository patientRepository,
-            CloudinaryService cloudinaryService) {
-
+            CloudinaryService cloudinaryService
+    ) {
         this.userRepository = userRepository;
         this.patientRepository = patientRepository;
         this.cloudinaryService = cloudinaryService;
     }
 
-    /*
-     * Get the profile of the currently authenticated patient.
-     *
-     * The email comes from the authenticated JWT.
-     * We use it to find the User and then find the
-     * Patient associated with that User.
-     */
-    public PatientProfileResponse getProfile(String email) {
+    @Transactional
+    public PatientProfileResponse getProfile(
+            String email
+    ) {
+        User user = findUserByEmail(email);
+        Patient patient = findPatientByUser(user);
 
-        // Step 1: Find the User using the authenticated user's email
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found"));
-
-        // Step 2: Find the Patient profile associated with this User
-        Patient patient = patientRepository.findByUser(user)
-                .orElseThrow(() ->
-                        new RuntimeException("Patient profile not found"));
-
-        // Step 3: Convert entity data into a safe response DTO
         return toProfileResponse(user, patient);
     }
 
-    /*
-     * Update the profile of the currently authenticated patient.
-     *
-     * The email comes from the authenticated JWT.
-     * The client does NOT provide a patientId or userId.
-     */
     @Transactional
     public PatientProfileResponse updateProfile(
             String email,
-            PatientProfileUpdateRequest request) {
+            PatientProfileUpdateRequest request
+    ) {
+        User user = findUserByEmail(email);
+        Patient patient = findPatientByUser(user);
 
-        // Step 1: Find the authenticated User
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found"));
+        patient.setGender(
+                request.getGender()
+        );
 
-        // Step 2: Find the Patient belonging to this User
-        Patient patient = patientRepository.findByUser(user)
-                .orElseThrow(() ->
-                        new RuntimeException("Patient profile not found"));
+        patient.setDateOfBirth(
+                request.getDateOfBirth()
+        );
 
-        // Step 3: Update the Patient profile
-        patient.setGender(request.getGender());
-        patient.setDateOfBirth(request.getDateOfBirth());
-        patient.setBloodGroup(request.getBloodGroup());
-        patient.setAddress(request.getAddress());
-        patient.setEmergencyContact(request.getEmergencyContact());
-        patient.setHeight(request.getHeight());
-        patient.setWeight(request.getWeight());
+        patient.setBloodGroup(
+                request.getBloodGroup()
+        );
 
-        // Step 4: Persist the updated Patient
-        Patient savedPatient = patientRepository.save(patient);
+        patient.setAddress(
+                normalizeOptionalText(
+                        request.getAddress()
+                )
+        );
 
-        // Step 5: Return the updated profile
-        return toProfileResponse(user, savedPatient);
+        patient.setEmergencyContact(
+                normalizeOptionalText(
+                        request.getEmergencyContact()
+                )
+        );
+
+        patient.setHeight(
+                request.getHeight()
+        );
+
+        patient.setWeight(
+                request.getWeight()
+        );
+
+        Patient savedPatient =
+                patientRepository.save(patient);
+
+        return toProfileResponse(
+                user,
+                savedPatient
+        );
     }
 
-    /*
-     * Uploads a new profile photo to Cloudinary and saves the resulting
-     * URL on the Patient. Kept separate from updateProfile() since it's a
-     * multipart request, not a JSON body.
-     */
     @Transactional
-    public PatientProfileResponse updateProfilePhoto(String email, MultipartFile file) {
+    public Map<String, Object>
+    generatePhotoUploadSignature(
+            String patientEmail
+    ) {
+        User user =
+                findUserByEmail(patientEmail);
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() ->
-                        new RuntimeException("User not found"));
+        Patient patient =
+                findPatientByUser(user);
 
-        Patient patient = patientRepository.findByUser(user)
-                .orElseThrow(() ->
-                        new RuntimeException("Patient profile not found"));
-
-        String photoUrl = cloudinaryService.uploadPatientPhoto(file);
-        patient.setPhotoUrl(photoUrl);
-
-        Patient savedPatient = patientRepository.save(patient);
-
-        return toProfileResponse(user, savedPatient);
+        return cloudinaryService
+                .generatePatientPhotoUploadSignature(
+                        patient.getPatientId()
+                );
     }
 
-    /*
-     * Converts User + Patient entities into the response DTO.
-     *
-     * Keeping this mapping in one place avoids duplicating
-     * the same constructor code in getProfile() and updateProfile().
-     */
+    @Transactional
+    public PatientProfileResponse updateProfilePhoto(
+            String patientEmail,
+            CloudinaryUploadResultRequest request
+    ) {
+        User user =
+                findUserByEmail(patientEmail);
+
+        Patient patient =
+                findPatientByUser(user);
+
+        String expectedPublicId =
+                cloudinaryService
+                        .buildPatientPhotoPublicId(
+                                patient.getPatientId()
+                        );
+
+        cloudinaryService.verifyProfilePhotoUpload(
+                request.getSecureUrl(),
+                request.getPublicId(),
+                request.getVersion(),
+                request.getSignature(),
+                expectedPublicId
+        );
+
+        patient.setPhotoUrl(
+                request.getSecureUrl()
+        );
+
+        patient.setPhotoPublicId(
+                request.getPublicId()
+        );
+
+        patient.setPhotoVersion(
+                request.getVersion()
+        );
+
+        Patient savedPatient =
+                patientRepository.save(patient);
+
+        return toProfileResponse(
+                user,
+                savedPatient
+        );
+    }
+
+    private User findUserByEmail(
+            String email
+    ) {
+        return userRepository.findByEmail(email)
+                .orElseThrow(() ->
+                        new IllegalStateException(
+                                "User not found."
+                        )
+                );
+    }
+
+    private Patient findPatientByUser(
+            User user
+    ) {
+        return patientRepository.findByUser(user)
+                .orElseThrow(() ->
+                        new IllegalStateException(
+                                "Patient profile not found."
+                        )
+                );
+    }
+
     private PatientProfileResponse toProfileResponse(
             User user,
-            Patient patient) {
-
+            Patient patient
+    ) {
         return new PatientProfileResponse(
                 user.getEmail(),
                 user.getFirstName(),
@@ -135,5 +191,15 @@ public class PatientProfileService {
                 patient.getWeight(),
                 patient.getPhotoUrl()
         );
+    }
+
+    private String normalizeOptionalText(
+            String value
+    ) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        return value.trim();
     }
 }

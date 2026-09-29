@@ -1,7 +1,6 @@
 package com.nexcare.backend.entity;
 
 import jakarta.persistence.*;
-import jakarta.validation.constraints.NotNull;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,10 +14,21 @@ import java.time.LocalDateTime;
         name = "appointments",
         uniqueConstraints = {
                 @UniqueConstraint(
+                        name = "uk_appointment_occurrence_queue",
                         columnNames = {
                                 "availability_occurrence_id",
                                 "queue_number"
                         }
+                )
+        },
+        indexes = {
+                @Index(
+                        name = "idx_appointment_patient_status",
+                        columnList = "patient_id, status"
+                ),
+                @Index(
+                        name = "idx_appointment_occurrence_status",
+                        columnList = "availability_occurrence_id, status"
                 )
         }
 )
@@ -31,14 +41,14 @@ public class Appointment {
     @Setter(AccessLevel.NONE)
     private Long appointmentId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(
             name = "patient_id",
             nullable = false
     )
     private Patient patient;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(
             name = "availability_occurrence_id",
             nullable = false
@@ -51,12 +61,31 @@ public class Appointment {
     )
     private int queueNumber;
 
-    @NotNull
     @Enumerated(EnumType.STRING)
     @Column(
-            nullable = false
+            name = "status",
+            nullable = false,
+            length = 30
     )
     private AppointmentStatus status;
+
+    @Column(
+            name = "reason_for_visit",
+            length = 500
+    )
+    private String reasonForVisit;
+
+    @Column(
+            name = "cancellation_reason",
+            length = 500
+    )
+    private String cancellationReason;
+
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @Column(name = "completed_at")
+    private LocalDateTime completedAt;
 
     @CreationTimestamp
     @Column(

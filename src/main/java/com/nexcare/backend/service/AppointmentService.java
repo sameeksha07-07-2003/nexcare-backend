@@ -1,41 +1,83 @@
 package com.nexcare.backend.service;
 
+import com.nexcare.backend.dto.AppointmentCancellationRequest;
 import com.nexcare.backend.dto.AppointmentRequestDto;
 import com.nexcare.backend.dto.AppointmentResponseDto;
+import com.nexcare.backend.dto.DoctorAppointmentScope;
+import com.nexcare.backend.dto.DoctorAppointmentSummaryDto;
 import com.nexcare.backend.entity.Appointment;
 import com.nexcare.backend.entity.AppointmentStatus;
 import com.nexcare.backend.entity.AvailabilityOccurrence;
+import com.nexcare.backend.entity.Doctor;
 import com.nexcare.backend.entity.DoctorAvailability;
 import com.nexcare.backend.entity.Patient;
+import com.nexcare.backend.entity.VerificationStatus;
 import com.nexcare.backend.repository.AppointmentRepository;
 import com.nexcare.backend.repository.AvailabilityOccurrenceRepository;
 import com.nexcare.backend.repository.DoctorAvailabilityRepository;
+import com.nexcare.backend.repository.DoctorRepository;
+import com.nexcare.backend.repository.DoctorReviewRepository;
 import com.nexcare.backend.repository.PatientRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.Optional;
 
 @Service
 public class AppointmentService {
 
+    private static final long
+            MAXIMUM_ADVANCE_BOOKING_WEEKS = 3;
+
+    private static final int MAXIMUM_PAGE_SIZE = 50;
+
+    private static final ZoneId BUSINESS_TIME_ZONE =
+            ZoneId.of("Asia/Kolkata");
+
     private final AppointmentRepository appointmentRepository;
-    private final AvailabilityOccurrenceRepository availabilityOccurrenceRepository;
-    private final DoctorAvailabilityRepository doctorAvailabilityRepository;
+
+    private final AvailabilityOccurrenceRepository
+            availabilityOccurrenceRepository;
+
+    private final DoctorAvailabilityRepository
+            doctorAvailabilityRepository;
+
     private final PatientRepository patientRepository;
+    private final DoctorRepository doctorRepository;
+
+    private final DoctorReviewRepository
+            doctorReviewRepository;
 
     public AppointmentService(
             AppointmentRepository appointmentRepository,
-            AvailabilityOccurrenceRepository availabilityOccurrenceRepository,
-            DoctorAvailabilityRepository doctorAvailabilityRepository,
-            PatientRepository patientRepository
+            AvailabilityOccurrenceRepository
+                    availabilityOccurrenceRepository,
+            DoctorAvailabilityRepository
+                    doctorAvailabilityRepository,
+            PatientRepository patientRepository,
+            DoctorRepository doctorRepository,
+            DoctorReviewRepository doctorReviewRepository
     ) {
-        this.appointmentRepository = appointmentRepository;
-        this.availabilityOccurrenceRepository = availabilityOccurrenceRepository;
-        this.doctorAvailabilityRepository = doctorAvailabilityRepository;
+        this.appointmentRepository =
+                appointmentRepository;
+
+        this.availabilityOccurrenceRepository =
+                availabilityOccurrenceRepository;
+
+        this.doctorAvailabilityRepository =
+                doctorAvailabilityRepository;
+
         this.patientRepository = patientRepository;
+        this.doctorRepository = doctorRepository;
+
+        this.doctorReviewRepository =
+                doctorReviewRepository;
     }
 
     @Transactional
@@ -43,165 +85,47 @@ public class AppointmentService {
             AppointmentRequestDto request,
             String patientEmail
     ) {
+        Patient patient =
+                findPatientByEmail(patientEmail);
 
-        /*
-         * STEP 1
-         * Find the patient associated with the authenticated user.
-         *
-         * patientEmail comes from JWT/Spring Security.
-         * The client does NOT provide the patient identity.
-         */
-        Patient patient = patientRepository.findByUserEmail(patientEmail)
-                .orElseThrow(() ->
-                        new IllegalStateException(
-                                "Patient profile not found for this user."
-                        )
-                );
-
-
-        /*
-         * STEP 2
-         * Find the doctor's recurring availability rule.
-         *
-         * Example:
-         * Availability ID = 17
-         * Monday
-         * 09:00 - 13:00
-         * maxPatientsAllowed = 5
-         */
         DoctorAvailability doctorAvailability =
                 doctorAvailabilityRepository
-                        .findById(request.getDoctorAvailabilityId())
+                        .findById(
+                                request.getDoctorAvailabilityId()
+                        )
                         .orElseThrow(() ->
                                 new IllegalStateException(
                                         "Doctor availability slot not found."
                                 )
                         );
 
-
-        /*
-         * STEP 3
-         * Validate the requested date.
-         *
-         * 3.1 The selected date must fall on the same
-         *     day of the week configured in DoctorAvailability.
-         */
-        LocalDate appointmentDate = request.getAppointmentDate();
-
-        if (appointmentDate.getDayOfWeek()
-                != doctorAvailability.getDayOfWeek()) {
-
-            throw new IllegalArgumentException(
-                    "Doctor is not available on the selected date."
+        if (!doctorAvailability.isActive()) {
+            throw new IllegalStateException(
+                    "This doctor availability is no longer active."
             );
         }
 
-
-        /*
-         * 3.2 V1 booking window:
-         * Patients can book only up to 3 weeks in advance.
-         *
-         * Frontend may disable dates beyond this range,
-         * but backend validation is mandatory because
-         * clients such as Postman can bypass frontend validation.
-         */
-        LocalDate maxAllowedDate =
-                LocalDate.now().plusWeeks(3);
-
-        if (appointmentDate.isAfter(maxAllowedDate)) {
-
-            throw new IllegalArgumentException(
-                    "You can only book appointments up to 3 weeks in advance."
+        if (doctorAvailability.getDoctor().getVerificationStatus()
+                != VerificationStatus.APPROVED) {
+            throw new SecurityException(
+                    "Appointments can only be booked with an approved doctor."
             );
         }
 
+        LocalDate appointmentDate =
+                request.getAppointmentDate();
 
-        /*
-         * STEP 4
-         * Find the AvailabilityOccurrence for:
-         *
-         *     DoctorAvailability + AppointmentDate
-         *
-         * If the occurrence already exists:
-         *     PESSIMISTIC_WRITE locks that database row.
-         *
-         * If it does not exist:
-         *     Create it lazily.
-         *
-         * The database UNIQUE constraint on
-         * (doctor_availability_id, appointment_date)
-         * protects against duplicate occurrence creation.
-         */
-        AvailabilityOccurrence occurrence;
+        validateAppointmentDate(
+                appointmentDate,
+                doctorAvailability
+        );
 
-        Optional<AvailabilityOccurrence> existingOccurrence =
-                availabilityOccurrenceRepository
-                        .findByDoctorAvailabilityAndAppointmentDate(
-                                doctorAvailability,
-                                appointmentDate
-                        );
-
-        if (existingOccurrence.isPresent()) {
-
-            /*
-             * Existing row is already locked because the repository
-             * method uses:
-             *
-             * @Lock(LockModeType.PESSIMISTIC_WRITE)
-             */
-            occurrence = existingOccurrence.get();
-
-        } else {
-
-            try {
-
-                AvailabilityOccurrence newOccurrence =
-                        new AvailabilityOccurrence();
-
-                newOccurrence.setDoctorAvailability(
-                        doctorAvailability
-                );
-
-                newOccurrence.setAppointmentDate(
+        AvailabilityOccurrence occurrence =
+                findOrCreateOccurrence(
+                        doctorAvailability,
                         appointmentDate
                 );
 
-                /*
-                 * saveAndFlush() forces the INSERT to reach
-                 * PostgreSQL immediately.
-                 *
-                 * This allows the UNIQUE constraint to detect
-                 * a concurrent occurrence creation attempt.
-                 */
-                occurrence =
-                        availabilityOccurrenceRepository
-                                .saveAndFlush(newOccurrence);
-
-            } catch (DataIntegrityViolationException e) {
-
-                /*
-                 * Another transaction may have created the same
-                 * occurrence concurrently.
-                 *
-                 * For V1 we fail safely and ask the patient
-                 * to retry rather than attempting to continue
-                 * inside the failed transaction.
-                 */
-                throw new IllegalStateException(
-                        "This appointment slot is currently being booked. Please try again."
-                );
-            }
-        }
-
-
-        /*
-         * STEP 5
-         * Prevent the same patient from booking the same
-         * occurrence more than once.
-         *
-         * CANCELLED appointments are ignored, so a patient
-         * can book again after cancelling.
-         */
         boolean alreadyBooked =
                 appointmentRepository
                         .existsByPatientAndAvailabilityOccurrenceAndStatusNot(
@@ -211,44 +135,21 @@ public class AppointmentService {
                         );
 
         if (alreadyBooked) {
-
             throw new IllegalStateException(
                     "You already have an active appointment for this slot."
             );
         }
 
-
-        /*
-         * STEP 6
-         * Check whether the occurrence has reached capacity.
-         *
-         * bookedPatients = currently active patients.
-         *
-         * lastQueueNumber is intentionally separate because
-         * queue numbers are never reused after cancellation.
-         */
-        if (occurrence.getBookedPatients()
-                >= doctorAvailability.getMaxPatientsAllowed()) {
-
+        if (
+                occurrence.getBookedPatients()
+                        >= doctorAvailability
+                        .getMaxPatientsAllowed()
+        ) {
             throw new IllegalStateException(
                     "This appointment slot is fully booked."
             );
         }
 
-
-        /*
-         * STEP 7
-         * Generate the next queue number.
-         *
-         * Example:
-         *
-         * lastQueueNumber = 4
-         * nextQueueNumber = 5
-         *
-         * Because the occurrence is pessimistically locked,
-         * concurrent transactions cannot safely modify the
-         * same counters at the same time.
-         */
         int nextQueueNumber =
                 occurrence.getLastQueueNumber() + 1;
 
@@ -256,38 +157,11 @@ public class AppointmentService {
                 nextQueueNumber
         );
 
-        /*
-         * Increase currently active patient count.
-         */
         occurrence.setBookedPatients(
                 occurrence.getBookedPatients() + 1
         );
 
-
-        /*
-         * STEP 8
-         * Create the actual appointment.
-         *
-         * Notice:
-         *
-         * Appointment does NOT store:
-         * - doctor
-         * - appointmentDate
-         * - startTime
-         * - endTime
-         *
-         * It points to AvailabilityOccurrence.
-         *
-         * Appointment
-         *      ↓
-         * AvailabilityOccurrence
-         *      ↓
-         * DoctorAvailability
-         *      ↓
-         * Doctor
-         */
-        Appointment appointment =
-                new Appointment();
+        Appointment appointment = new Appointment();
 
         appointment.setPatient(patient);
 
@@ -295,79 +169,699 @@ public class AppointmentService {
                 occurrence
         );
 
-        appointment.setQueueNumber(
-                nextQueueNumber
-        );
+        appointment.setQueueNumber(nextQueueNumber);
 
         appointment.setStatus(
                 AppointmentStatus.BOOKED
         );
 
+        appointment.setReasonForVisit(
+                normalizeOptionalText(
+                        request.getReasonForVisit()
+                )
+        );
 
-        /*
-         * STEP 9
-         * Persist the appointment.
-         *
-         * The occurrence is already a managed JPA entity,
-         * so its changed counters will be detected by
-         * Hibernate's dirty checking.
-         */
         Appointment savedAppointment =
                 appointmentRepository.save(appointment);
 
+        return toResponse(savedAppointment);
+    }
 
-        /*
-         * STEP 10
-         * Build the response DTO.
-         *
-         * We return useful information to the frontend
-         * without exposing JPA entities.
-         */
+    @Transactional
+    public Page<AppointmentResponseDto>
+    getPatientAppointments(
+            String patientEmail,
+            AppointmentStatus status,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
+
+        Patient patient =
+                findPatientByEmail(patientEmail);
+
+        PageRequest pageRequest =
+                PageRequest.of(page, size);
+
+        if (status == AppointmentStatus.BOOKED) {
+            LocalDateTime now = currentDateTime();
+
+            return appointmentRepository
+                    .findPatientUpcomingAppointments(
+                            patient,
+                            now.toLocalDate(),
+                            now.toLocalTime(),
+                            pageRequest
+                    )
+                    .map(this::toResponse);
+        }
+
+        return appointmentRepository
+                .findPatientAppointments(
+                        patient,
+                        status,
+                        pageRequest
+                )
+                .map(this::toResponse);
+    }
+
+    @Transactional
+    public Page<AppointmentResponseDto>
+    getDoctorAppointments(
+            String doctorEmail,
+            AppointmentStatus status,
+            DoctorAppointmentScope scope,
+            int page,
+            int size
+    ) {
+        validatePagination(page, size);
+
+        if (status != null && scope != null) {
+            throw new IllegalArgumentException(
+                    "Use either status or scope, not both."
+            );
+        }
+
+        Doctor doctor =
+                findDoctorByEmail(doctorEmail);
+
+        requireApprovedDoctor(doctor);
+
+        PageRequest pageRequest =
+                PageRequest.of(page, size);
+
+        if (scope == null) {
+            return appointmentRepository
+                    .findDoctorAppointments(
+                            doctor,
+                            status,
+                            pageRequest
+                    )
+                    .map(this::toResponse);
+        }
+
+        LocalDateTime currentDateTime =
+                currentDateTime();
+
+        return switch (scope) {
+            case TODAY ->
+                    appointmentRepository
+                            .findDoctorTodayAppointments(
+                                    doctor,
+                                    currentDateTime
+                                            .toLocalDate(),
+                                    currentDateTime
+                                            .toLocalTime(),
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+
+            case UPCOMING ->
+                    appointmentRepository
+                            .findDoctorUpcomingAppointments(
+                                    doctor,
+                                    currentDateTime
+                                            .toLocalDate(),
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+
+            case NEEDS_ACTION ->
+                    appointmentRepository
+                            .findDoctorAppointmentsNeedingAction(
+                                    doctor,
+                                    currentDateTime
+                                            .toLocalDate(),
+                                    currentDateTime
+                                            .toLocalTime(),
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+
+            case COMPLETED ->
+                    appointmentRepository
+                            .findDoctorAppointments(
+                                    doctor,
+                                    AppointmentStatus.COMPLETED,
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+
+            case CANCELLED ->
+                    appointmentRepository
+                            .findDoctorAppointments(
+                                    doctor,
+                                    AppointmentStatus.CANCELLED,
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+
+            case NO_SHOW ->
+                    appointmentRepository
+                            .findDoctorAppointments(
+                                    doctor,
+                                    AppointmentStatus.NO_SHOW,
+                                    pageRequest
+                            )
+                            .map(this::toResponse);
+        };
+    }
+
+    @Transactional
+    public DoctorAppointmentSummaryDto
+    getDoctorAppointmentSummary(
+            String doctorEmail
+    ) {
+        Doctor doctor =
+                findDoctorByEmail(doctorEmail);
+
+        requireApprovedDoctor(doctor);
+
+        LocalDateTime currentDateTime =
+                currentDateTime();
+
+        LocalDate currentDate =
+                currentDateTime.toLocalDate();
+
+        return DoctorAppointmentSummaryDto
+                .builder()
+                .today(
+                        appointmentRepository
+                                .countDoctorTodayAppointments(
+                                        doctor,
+                                        currentDate,
+                                        currentDateTime
+                                                .toLocalTime()
+                                )
+                )
+                .upcoming(
+                        appointmentRepository
+                                .countDoctorUpcomingAppointments(
+                                        doctor,
+                                        currentDate
+                                )
+                )
+                .needsAction(
+                        appointmentRepository
+                                .countDoctorAppointmentsNeedingAction(
+                                        doctor,
+                                        currentDate,
+                                        currentDateTime
+                                                .toLocalTime()
+                                )
+                )
+                .completed(
+                        appointmentRepository
+                                .countDoctorAppointmentsByStatus(
+                                        doctor,
+                                        AppointmentStatus.COMPLETED
+                                )
+                )
+                .cancelled(
+                        appointmentRepository
+                                .countDoctorAppointmentsByStatus(
+                                        doctor,
+                                        AppointmentStatus.CANCELLED
+                                )
+                )
+                .noShow(
+                        appointmentRepository
+                                .countDoctorAppointmentsByStatus(
+                                        doctor,
+                                        AppointmentStatus.NO_SHOW
+                                )
+                )
+                .build();
+    }
+
+    @Transactional
+    public AppointmentResponseDto cancelAppointment(
+            Long appointmentId,
+            String patientEmail,
+            AppointmentCancellationRequest request
+    ) {
+        Patient patient =
+                findPatientByEmail(patientEmail);
+
+        Appointment appointment =
+                appointmentRepository
+                        .findByIdForUpdate(appointmentId)
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Appointment not found."
+                                )
+                        );
+
+        if (
+                !appointment.getPatient()
+                        .getPatientId()
+                        .equals(patient.getPatientId())
+        ) {
+            throw new SecurityException(
+                    "You are not allowed to cancel this appointment."
+            );
+        }
+
+        if (
+                appointment.getStatus()
+                        != AppointmentStatus.BOOKED
+        ) {
+            throw new IllegalStateException(
+                    "Only a booked appointment can be cancelled."
+            );
+        }
+
+        AvailabilityOccurrence occurrence =
+                appointment
+                        .getAvailabilityOccurrence();
+
+        DoctorAvailability availability =
+                occurrence.getDoctorAvailability();
+
+        LocalDateTime appointmentStart =
+                LocalDateTime.of(
+                        occurrence.getAppointmentDate(),
+                        availability.getStartTime()
+                );
+
+        LocalDateTime now = currentDateTime();
+
+        if (!now.isBefore(appointmentStart)) {
+            throw new IllegalStateException(
+                    "This appointment can no longer be cancelled "
+                            + "because its session has already started."
+            );
+        }
+
+        AvailabilityOccurrence lockedOccurrence =
+                availabilityOccurrenceRepository
+                        .findByIdForUpdate(
+                                occurrence.getOccurrenceId()
+                        )
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Appointment occurrence not found."
+                                )
+                        );
+
+        lockedOccurrence.setBookedPatients(
+                Math.max(
+                        lockedOccurrence
+                                .getBookedPatients() - 1,
+                        0
+                )
+        );
+
+        appointment.setStatus(
+                AppointmentStatus.CANCELLED
+        );
+
+        appointment.setCancellationReason(
+                normalizeOptionalText(
+                        request.getReason()
+                )
+        );
+
+        appointment.setCancelledAt(now);
+
+        Appointment savedAppointment =
+                appointmentRepository.save(appointment);
+
+        return toResponse(savedAppointment);
+    }
+
+    @Transactional
+    public AppointmentResponseDto completeAppointment(
+            Long appointmentId,
+            String doctorEmail
+    ) {
+        Doctor doctor =
+                findDoctorByEmail(doctorEmail);
+
+        requireApprovedDoctor(doctor);
+
+        Appointment appointment =
+                findDoctorOwnedAppointment(
+                        appointmentId,
+                        doctor
+                );
+
+        if (
+                appointment.getStatus()
+                        != AppointmentStatus.BOOKED
+        ) {
+            throw new IllegalStateException(
+                    "Only a booked appointment can be completed."
+            );
+        }
+
+        AvailabilityOccurrence occurrence =
+                appointment
+                        .getAvailabilityOccurrence();
+
+        DoctorAvailability availability =
+                occurrence.getDoctorAvailability();
+
+        LocalDateTime appointmentStart =
+                LocalDateTime.of(
+                        occurrence.getAppointmentDate(),
+                        availability.getStartTime()
+                );
+
+        LocalDateTime now = currentDateTime();
+
+        if (now.isBefore(appointmentStart)) {
+            throw new IllegalStateException(
+                    "A future appointment cannot be completed."
+            );
+        }
+
+        appointment.setStatus(
+                AppointmentStatus.COMPLETED
+        );
+
+        appointment.setCompletedAt(now);
+
+        Appointment savedAppointment =
+                appointmentRepository.save(appointment);
+
+        return toResponse(savedAppointment);
+    }
+
+    @Transactional
+    public AppointmentResponseDto
+    markAppointmentAsNoShow(
+            Long appointmentId,
+            String doctorEmail
+    ) {
+        Doctor doctor =
+                findDoctorByEmail(doctorEmail);
+
+        requireApprovedDoctor(doctor);
+
+        Appointment appointment =
+                findDoctorOwnedAppointment(
+                        appointmentId,
+                        doctor
+                );
+
+        if (
+                appointment.getStatus()
+                        != AppointmentStatus.BOOKED
+        ) {
+            throw new IllegalStateException(
+                    "Only a booked appointment can be marked as no-show."
+            );
+        }
+
+        AvailabilityOccurrence occurrence =
+                appointment
+                        .getAvailabilityOccurrence();
+
+        DoctorAvailability availability =
+                occurrence.getDoctorAvailability();
+
+        LocalDateTime appointmentEnd =
+                LocalDateTime.of(
+                        occurrence.getAppointmentDate(),
+                        availability.getEndTime()
+                );
+
+        LocalDateTime now = currentDateTime();
+
+        if (now.isBefore(appointmentEnd)) {
+            throw new IllegalStateException(
+                    "An appointment cannot be marked as no-show "
+                            + "before its session ends."
+            );
+        }
+
+        appointment.setStatus(
+                AppointmentStatus.NO_SHOW
+        );
+
+        Appointment savedAppointment =
+                appointmentRepository.save(appointment);
+
+        return toResponse(savedAppointment);
+    }
+
+    private Appointment findDoctorOwnedAppointment(
+            Long appointmentId,
+            Doctor doctor
+    ) {
+        Appointment appointment =
+                appointmentRepository
+                        .findByIdForUpdate(appointmentId)
+                        .orElseThrow(() ->
+                                new IllegalStateException(
+                                        "Appointment not found."
+                                )
+                        );
+
+        Long appointmentDoctorId =
+                appointment
+                        .getAvailabilityOccurrence()
+                        .getDoctorAvailability()
+                        .getDoctor()
+                        .getDoctorId();
+
+        if (
+                !appointmentDoctorId.equals(
+                        doctor.getDoctorId()
+                )
+        ) {
+            throw new SecurityException(
+                    "You are not allowed to manage this appointment."
+            );
+        }
+
+        return appointment;
+    }
+
+    private Patient findPatientByEmail(String email) {
+        return patientRepository
+                .findByUserEmail(email)
+                .orElseThrow(() ->
+                        new IllegalStateException(
+                                "Patient profile not found."
+                        )
+                );
+    }
+
+    private Doctor findDoctorByEmail(String email) {
+        return doctorRepository
+                .findByUserEmail(email)
+                .orElseThrow(() ->
+                        new IllegalStateException(
+                                "Doctor profile not found."
+                        )
+                );
+    }
+
+    private void validateAppointmentDate(
+            LocalDate appointmentDate,
+            DoctorAvailability doctorAvailability
+    ) {
+        LocalDate currentDate =
+                currentDateTime().toLocalDate();
+
+        if (appointmentDate.isBefore(currentDate)) {
+            throw new IllegalArgumentException(
+                    "Appointment date cannot be in the past."
+            );
+        }
+
+        if (
+                appointmentDate.getDayOfWeek()
+                        != doctorAvailability.getDayOfWeek()
+        ) {
+            throw new IllegalArgumentException(
+                    "Doctor is not available on the selected date."
+            );
+        }
+
+        if (appointmentDate.equals(currentDate)
+                && !currentDateTime().toLocalTime()
+                    .isBefore(doctorAvailability.getStartTime())) {
+            throw new IllegalArgumentException(
+                    "This appointment session has already started."
+            );
+        }
+
+        LocalDate maximumAllowedDate =
+                currentDate.plusWeeks(
+                        MAXIMUM_ADVANCE_BOOKING_WEEKS
+                );
+
+        if (
+                appointmentDate.isAfter(
+                        maximumAllowedDate
+                )
+        ) {
+            throw new IllegalArgumentException(
+                    "You can only book appointments up to "
+                            + MAXIMUM_ADVANCE_BOOKING_WEEKS
+                            + " weeks in advance."
+            );
+        }
+    }
+
+    private AvailabilityOccurrence
+    findOrCreateOccurrence(
+            DoctorAvailability doctorAvailability,
+            LocalDate appointmentDate
+    ) {
+        Optional<AvailabilityOccurrence>
+                existingOccurrence =
+                availabilityOccurrenceRepository
+                        .findByDoctorAvailabilityAndAppointmentDate(
+                                doctorAvailability,
+                                appointmentDate
+                        );
+
+        if (existingOccurrence.isPresent()) {
+            return existingOccurrence.get();
+        }
+
+        try {
+            AvailabilityOccurrence newOccurrence =
+                    new AvailabilityOccurrence();
+
+            newOccurrence.setDoctorAvailability(
+                    doctorAvailability
+            );
+
+            newOccurrence.setAppointmentDate(
+                    appointmentDate
+            );
+
+            newOccurrence.setBookedPatients(0);
+            newOccurrence.setLastQueueNumber(0);
+
+            return availabilityOccurrenceRepository
+                    .saveAndFlush(newOccurrence);
+
+        } catch (
+                DataIntegrityViolationException exception
+        ) {
+            throw new IllegalStateException(
+                    "This appointment slot is currently being booked. "
+                            + "Please try again."
+            );
+        }
+    }
+
+    private AppointmentResponseDto toResponse(
+            Appointment appointment
+    ) {
+        AvailabilityOccurrence occurrence =
+                appointment
+                        .getAvailabilityOccurrence();
+
+        DoctorAvailability availability =
+                occurrence.getDoctorAvailability();
+
+        Doctor doctor = availability.getDoctor();
+        Patient patient = appointment.getPatient();
+
         String doctorName =
-                doctorAvailability.getDoctor()
-                        .getUser()
-                        .getFirstName()
+                doctor.getUser().getFirstName()
                         + " "
-                        + doctorAvailability.getDoctor()
-                        .getUser()
-                        .getLastName();
+                        + doctor.getUser().getLastName();
 
-        String timeWindow =
-                doctorAvailability.getStartTime()
-                        + " - "
-                        + doctorAvailability.getEndTime();
+        String patientName =
+                patient.getUser().getFirstName()
+                        + " "
+                        + patient.getUser().getLastName();
 
+        boolean reviewSubmitted =
+                doctorReviewRepository
+                        .existsByAppointment(appointment);
 
-        /*
-         * STEP 11
-         * Transaction commits after the method successfully
-         * completes.
-         *
-         * At commit:
-         *
-         * 1. Appointment INSERT
-         * 2. AvailabilityOccurrence UPDATE
-         *
-         * Both succeed together.
-         *
-         * If an exception occurs before commit,
-         * the transaction rolls back.
-         */
-        return AppointmentResponseDto.builder()
+        return AppointmentResponseDto
+                .builder()
                 .appointmentId(
-                        savedAppointment.getAppointmentId()
+                        appointment.getAppointmentId()
+                )
+                .doctorId(
+                        doctor.getDoctorId()
                 )
                 .doctorName(doctorName)
+                .doctorProfileImageUrl(
+                        doctor.getProfileImageUrl()
+                )
+                .specialization(
+                        doctor.getSpecialization()
+                )
+                .patientId(
+                        patient.getPatientId()
+                )
+                .patientName(patientName)
                 .appointmentDate(
                         occurrence.getAppointmentDate()
                 )
-                .timeWindow(timeWindow)
+                .startTime(
+                        availability.getStartTime()
+                )
+                .endTime(
+                        availability.getEndTime()
+                )
                 .queueNumber(
-                        savedAppointment.getQueueNumber()
+                        appointment.getQueueNumber()
                 )
                 .status(
-                        savedAppointment.getStatus().name()
+                        appointment.getStatus()
                 )
+                .reasonForVisit(
+                        appointment.getReasonForVisit()
+                )
+                .cancellationReason(
+                        appointment.getCancellationReason()
+                )
+                .reviewSubmitted(reviewSubmitted)
                 .build();
+    }
+
+    private void validatePagination(
+            int page,
+            int size
+    ) {
+        if (page < 0) {
+            throw new IllegalArgumentException(
+                    "Page number cannot be negative."
+            );
+        }
+
+        if (size < 1 || size > MAXIMUM_PAGE_SIZE) {
+            throw new IllegalArgumentException(
+                    "Page size must be between 1 and 50."
+            );
+        }
+    }
+
+    private String normalizeOptionalText(
+            String value
+    ) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+
+        return value.trim();
+    }
+
+    private LocalDateTime currentDateTime() {
+        return LocalDateTime.now(
+                BUSINESS_TIME_ZONE
+        );
+    }
+
+    private void requireApprovedDoctor(Doctor doctor) {
+        if (doctor.getVerificationStatus()
+                != VerificationStatus.APPROVED) {
+            throw new SecurityException(
+                    "Your doctor profile must be approved before managing appointments."
+            );
+        }
     }
 }

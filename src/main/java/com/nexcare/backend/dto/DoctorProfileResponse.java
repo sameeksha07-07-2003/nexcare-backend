@@ -1,26 +1,41 @@
 package com.nexcare.backend.dto;
 
 import com.nexcare.backend.entity.VerificationStatus;
-import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Getter;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 
 @Getter
-@AllArgsConstructor
+@Builder
 public class DoctorProfileResponse {
-    private final String email;
-    private final String firstName;
-    private final String lastName;
-    private final String phoneNumber;
 
-    private final String additionalQualification;
-    private final String placeOfWork;
-    private final String specialization;
-    private final String medicalCouncil;
-    private final String medicalRegistrationNumber;
-    private final String primaryQualification;
+    private String email;
+    private String firstName;
+    private String lastName;
+    private String phoneNumber;
 
-    private final VerificationStatus verificationStatus;
-    private final Integer yearOfPassing;
+    private String medicalRegistrationNumber;
+    private String medicalCouncil;
+    private LocalDate registrationDate;
 
+    private String primaryQualification;
+    private String additionalQualification;
+    private String specialization;
+
+    private Integer yearOfPassing;
+    private String placeOfWork;
+    private String city;
+    private Integer yearsOfExperience;
+
+    private String bio;
+    private BigDecimal consultationFee;
+
+    private String profileImageUrl;
+
+    private BigDecimal averageRating;
+    private Integer reviewCount;
+
+    private VerificationStatus verificationStatus;
 }
