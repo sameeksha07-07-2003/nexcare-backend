@@ -1,5 +1,6 @@
 package com.nexcare.backend.service;
 
+import com.nexcare.backend.config.BookingPolicy;
 import com.nexcare.backend.dto.DoctorAvailabilityRequest;
 import com.nexcare.backend.dto.DoctorAvailabilityResponse;
 import com.nexcare.backend.dto.PublicDoctorAvailabilityResponse;
@@ -24,8 +25,6 @@ import java.util.Map;
 
 @Service
 public class DoctorAvailabilityService {
-
-    private static final int MAXIMUM_PUBLIC_SCHEDULE_DAYS = 21;
 
     private static final ZoneId BUSINESS_TIME_ZONE =
             ZoneId.of("Asia/Kolkata");
@@ -277,9 +276,11 @@ public class DoctorAvailabilityService {
             LocalDate startDate,
             int days
     ) {
-        if (days < 1 || days > MAXIMUM_PUBLIC_SCHEDULE_DAYS) {
+        if (days < 1 || days > BookingPolicy.BOOKING_WINDOW_DAYS) {
             throw new IllegalArgumentException(
-                    "Days must be between 1 and 21."
+                    "Days must be between 1 and "
+                            + BookingPolicy.BOOKING_WINDOW_DAYS
+                            + "."
             );
         }
 
@@ -299,6 +300,20 @@ public class DoctorAvailabilityService {
 
         LocalDate endDate =
                 effectiveStartDate.plusDays(days - 1L);
+
+        LocalDate maximumBookableDate =
+                currentDate.plusDays(
+                        BookingPolicy.MAXIMUM_ADVANCE_DAYS
+                );
+
+        if (effectiveStartDate.isAfter(maximumBookableDate)
+                || endDate.isAfter(maximumBookableDate)) {
+            throw new IllegalArgumentException(
+                    "Availability can only be requested within the next "
+                            + BookingPolicy.BOOKING_WINDOW_DAYS
+                            + " calendar days, including today."
+            );
+        }
 
         Doctor doctor = doctorRepository
                 .findByDoctorIdAndVerificationStatus(

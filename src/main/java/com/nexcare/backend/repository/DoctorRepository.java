@@ -60,6 +60,22 @@ public interface DoctorRepository
             Long doctorId
     );
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT doctor
+            FROM Doctor doctor
+            JOIN FETCH doctor.user
+            WHERE doctor.doctorId = :doctorId
+            """)
+    Optional<Doctor> findByIdForVerificationUpdate(
+            @Param("doctorId")
+            Long doctorId
+    );
+
+    long countByVerificationStatus(
+            VerificationStatus verificationStatus
+    );
+
     /*
      * Values used to populate the public city filter.
      */

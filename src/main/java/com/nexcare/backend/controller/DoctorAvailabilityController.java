@@ -1,5 +1,6 @@
 package com.nexcare.backend.controller;
 
+import com.nexcare.backend.config.BookingPolicy;
 import com.nexcare.backend.dto.DoctorAvailabilityRequest;
 import com.nexcare.backend.dto.DoctorAvailabilityResponse;
 import com.nexcare.backend.dto.PublicDoctorAvailabilityResponse;
@@ -109,7 +110,9 @@ public class DoctorAvailabilityController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE)
             LocalDate startDate,
 
-            @RequestParam(defaultValue = "21")
+            @RequestParam(
+                    defaultValue = BookingPolicy.BOOKING_WINDOW_DAYS_TEXT
+            )
             int days
     ) {
         return doctorAvailabilityService

@@ -1,5 +1,6 @@
 package com.nexcare.backend.service;
 
+import com.nexcare.backend.config.BookingPolicy;
 import com.nexcare.backend.dto.AppointmentCancellationRequest;
 import com.nexcare.backend.dto.AppointmentRequestDto;
 import com.nexcare.backend.dto.AppointmentResponseDto;
@@ -31,9 +32,6 @@ import java.util.Optional;
 
 @Service
 public class AppointmentService {
-
-    private static final long
-            MAXIMUM_ADVANCE_BOOKING_WEEKS = 3;
 
     private static final int MAXIMUM_PAGE_SIZE = 50;
 
@@ -690,8 +688,8 @@ public class AppointmentService {
         }
 
         LocalDate maximumAllowedDate =
-                currentDate.plusWeeks(
-                        MAXIMUM_ADVANCE_BOOKING_WEEKS
+                currentDate.plusDays(
+                        BookingPolicy.MAXIMUM_ADVANCE_DAYS
                 );
 
         if (
@@ -701,8 +699,8 @@ public class AppointmentService {
         ) {
             throw new IllegalArgumentException(
                     "You can only book appointments up to "
-                            + MAXIMUM_ADVANCE_BOOKING_WEEKS
-                            + " weeks in advance."
+                            + BookingPolicy.BOOKING_WINDOW_DAYS
+                            + " calendar days, including today."
             );
         }
     }

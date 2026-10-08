@@ -196,4 +196,65 @@ public final class DoctorSpecification {
             );
         };
     }
+
+    public static Specification<Doctor> matchesAdminSearch(
+            String search
+    ) {
+        if (search == null || search.isBlank()) {
+            return null;
+        }
+
+        String normalizedSearch = search
+                .trim()
+                .toLowerCase()
+                .replaceAll("\\s+", " ");
+
+        String pattern = "%" + normalizedSearch + "%";
+
+        return (root, query, builder) -> builder.or(
+                builder.like(
+                        builder.lower(root.get("user").get("firstName")),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(root.get("user").get("lastName")),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(root.get("user").get("email")),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(
+                                builder.concat(
+                                        builder.concat(
+                                                root.get("user")
+                                                        .get("firstName"),
+                                                " "
+                                        ),
+                                        root.get("user").get("lastName")
+                                )
+                        ),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(
+                                root.get("medicalRegistrationNumber")
+                        ),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(root.get("specialization")),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(root.get("placeOfWork")),
+                        pattern
+                ),
+                builder.like(
+                        builder.lower(root.get("city")),
+                        pattern
+                )
+        );
+    }
 }

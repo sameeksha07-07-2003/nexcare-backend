@@ -78,6 +78,13 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
 
                         /*
+                         * Administrative APIs are never public and cannot be
+                         * accessed by patient or doctor JWTs.
+                         */
+                        .requestMatchers("/api/v1/admin/**")
+                        .hasRole("ADMIN")
+
+                        /*
                          * Authentication endpoints
                          */
                         .requestMatchers(
